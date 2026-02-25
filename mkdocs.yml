@@ -1,0 +1,20 @@
+site_name: meow-sdk
+site_url: https://meow-sdk.readthedocs.io
+site_description: Python client for the meow meow scratch API
+repo_url: https://github.com/meowmeowscratch/meow-sdk
+
+theme:
+  name: material
+  palette:
+    scheme: default
+    primary: black
+    accent: black
+  font:
+    text: Inter
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - API Reference: api-reference.md
+  - Raspberry Pi: raspberry-pi.md
+  - Error Handling: errors.md
