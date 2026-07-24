@@ -570,7 +570,7 @@ class TestAppManagement(unittest.TestCase):
             self.assertEqual(body["name"], "New App")
             self.assertEqual(body["slug"], "new-app")
             self.assertEqual(body["description"], "desc")
-            self.assertTrue(body["is_public"])
+            self.assertFalse(body["is_public"])
 
     def test_create_app_private(self):
         with patch.object(self.api.session, "request") as mock:
@@ -585,7 +585,7 @@ class TestAppManagement(unittest.TestCase):
             self.api.create_app("App", "app")
             body = mock.call_args[1]["json"]
             self.assertEqual(body["description"], "")
-            self.assertTrue(body["is_public"])
+            self.assertFalse(body["is_public"])
 
     def test_get_app(self):
         with patch.object(self.api.session, "request") as mock:
@@ -649,7 +649,7 @@ class TestEndpointManagement(unittest.TestCase):
             self.api.create_endpoint("app", "Readings", "readings")
             body = mock.call_args[1]["json"]
             self.assertEqual(body["endpoint_type"], "collection")
-            self.assertTrue(body["is_public"])
+            self.assertFalse(body["is_public"])
 
     def test_create_endpoint_static(self):
         with patch.object(self.api.session, "request") as mock:
@@ -725,7 +725,17 @@ class TestStaticPayload(unittest.TestCase):
                 "updated_at": "2024-01-01T00:00:00Z",
             })
             result = self.api.get_payload("app", "status")
+            self.assertTrue(result["open"])
+
+    def test_get_payload_state_returns_envelope(self):
+        with patch.object(self.api.session, "request") as mock:
+            mock.return_value = _mock_response(200, {
+                "data": {"open": True},
+                "updated_at": "2024-01-01T00:00:00Z",
+            })
+            result = self.api.get_payload_state("app", "status")
             self.assertTrue(result["data"]["open"])
+            self.assertEqual(result["updated_at"], "2024-01-01T00:00:00Z")
 
     def test_set_payload_puts_data(self):
         with patch.object(self.api.session, "request") as mock:
@@ -957,7 +967,7 @@ class TestProxyConfig(unittest.TestCase):
             self.assertEqual(body["headers"], {"Authorization": "Bearer token"})
             self.assertEqual(body["query_params"], {"limit": "10"})
             self.assertEqual(body["body_template"], '{"search": "{{query}}"}')
-            self.assertEqual(body["jmespath_transform"], "results[].name")
+            self.assertEqual(body["transform"], "results[].name")
 
     def test_set_proxy_url(self):
         with patch.object(self.api.session, "request") as mock:
@@ -980,7 +990,7 @@ class TestProxyConfig(unittest.TestCase):
             )
             body = mock.call_args[1]["json"]
             self.assertIn("headers", body)
-            self.assertIn("jmespath_transform", body)
+            self.assertIn("transform", body)
             self.assertNotIn("query_params", body)
             self.assertNotIn("body_template", body)
 
@@ -1422,13 +1432,16 @@ class TestDashboardWidgets(unittest.TestCase):
         with patch.object(self.api.session, "request") as mock:
             mock.return_value = _mock_response(201, {"uuid": "new-w"})
             self.api.create_dashboard_widget(
-                "my-room", "ep-uuid", "lights_on", "toggle", "Lights On"
+                "my-room", "home", "settings",
+                "lights_on", "toggle", "Lights On"
             )
             call_args = mock.call_args
             self.assertEqual(call_args[0][0], "POST")
-            self.assertIn("dashboards/my-room/widgets/", call_args[0][1])
+            self.assertIn(
+                "dashboards/my-room/widgets/home/settings/",
+                call_args[0][1],
+            )
             body = call_args[1]["json"]
-            self.assertEqual(body["endpoint_id"], "ep-uuid")
             self.assertEqual(body["key_path"], "lights_on")
             self.assertEqual(body["widget_type"], "toggle")
             self.assertEqual(body["label"], "Lights On")
@@ -1437,7 +1450,7 @@ class TestDashboardWidgets(unittest.TestCase):
         with patch.object(self.api.session, "request") as mock:
             mock.return_value = _mock_response(201, {})
             self.api.create_dashboard_widget(
-                "my-room", "ep-uuid", "temp", "slider", "Temperature",
+                "my-room", "home", "settings", "temp", "slider", "Temperature",
                 config={"min": 0, "max": 100},
             )
             body = mock.call_args[1]["json"]
@@ -1447,7 +1460,7 @@ class TestDashboardWidgets(unittest.TestCase):
         with patch.object(self.api.session, "request") as mock:
             mock.return_value = _mock_response(201, {})
             self.api.create_dashboard_widget(
-                "my-room", "ep-uuid", "temp", "display", "Temp",
+                "my-room", "home", "settings", "temp", "display", "Temp",
                 sort_order=5,
             )
             body = mock.call_args[1]["json"]
@@ -1459,7 +1472,9 @@ class TestDashboardWidgets(unittest.TestCase):
         for wt in widget_types:
             with patch.object(self.api.session, "request") as mock:
                 mock.return_value = _mock_response(201, {})
-                self.api.create_dashboard_widget("room", "ep", "key", wt, "Label")
+                self.api.create_dashboard_widget(
+                    "room", "app", "endpoint", "key", wt, "Label"
+                )
                 body = mock.call_args[1]["json"]
                 self.assertEqual(body["widget_type"], wt)
 
@@ -1664,13 +1679,15 @@ class TestAppAPIKeys(unittest.TestCase):
             self.assertEqual(result["key"], "mms_live_abc123")
             self.assertEqual(result["uuid"], "new-key-uuid")
 
-    def test_create_app_key_no_body(self):
-        """create_app_key sends no JSON body."""
+    def test_create_app_key_default_body(self):
+        """create_app_key sends explicit least-privilege metadata."""
         with patch.object(self.api.session, "request") as mock:
             mock.return_value = _mock_response(201, {})
             self.api.create_app_key("app")
-            call_kwargs = mock.call_args[1]
-            self.assertNotIn("json", call_kwargs)
+            self.assertEqual(
+                mock.call_args[1]["json"],
+                {"name": "Device key", "scopes": ["read", "write"]},
+            )
 
     def test_delete_app_key_url(self):
         with patch.object(self.api.session, "request") as mock:
@@ -1821,7 +1838,7 @@ class TestPublicDashboard(unittest.TestCase):
             })
             self.api.public_dashboard("abc123token")
             mock.assert_called_once_with(
-                "GET", "http://example.com/api/v1/dashboards/abc123token/",
+                "GET", "http://example.com/api/v2/dashboards/abc123token/",
                 timeout=30,
             )
 
@@ -1854,7 +1871,7 @@ class TestImports(unittest.TestCase):
     def test_version_exists(self):
         import meow_sdk
         self.assertTrue(hasattr(meow_sdk, "__version__"))
-        self.assertEqual(meow_sdk.__version__, "0.6.0")
+        self.assertEqual(meow_sdk.__version__, "0.7.0")
 
     def test_all_exports(self):
         import meow_sdk

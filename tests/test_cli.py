@@ -151,13 +151,53 @@ class TestPrint:
 
 
 class TestGetClient:
-    """get_client reads env vars and returns a Meow instance."""
+    """get_client reads the credential selected for the operation."""
 
-    @patch.dict("os.environ", {"MEOW_URL": "http://test.local", "MEOW_USERNAME": "bob", "MEOW_API_KEY": "key-123"})
+    @patch.dict(
+        "os.environ",
+        {
+            "MEOW_URL": "http://test.local",
+            "MEOW_USERNAME": "bob",
+            "MEOW_PLATFORM_API_KEY": "platform-key-123",
+            "MEOW_APP_API_KEY": "app-key-123",
+        },
+        clear=True,
+    )
     @patch("meow_sdk.cli.Meow")
-    def test_reads_env_vars(self, MockMeow):
+    def test_reads_platform_env_var_by_default(self, MockMeow):
         get_client()
-        MockMeow.assert_called_once_with(base_url="http://test.local", username="bob", api_key="key-123")
+        MockMeow.assert_called_once_with(
+            base_url="http://test.local",
+            username="bob",
+            api_key="platform-key-123",
+        )
+
+    @patch.dict(
+        "os.environ",
+        {
+            "MEOW_PLATFORM_API_KEY": "platform-key-123",
+            "MEOW_APP_API_KEY": "app-key-123",
+        },
+        clear=True,
+    )
+    @patch("meow_sdk.cli.Meow")
+    def test_reads_app_env_var_for_app_operations(self, MockMeow):
+        get_client("app")
+        MockMeow.assert_called_once_with(
+            base_url="https://meowmeowscratch.com",
+            username=None,
+            api_key="app-key-123",
+        )
+
+    @patch.dict("os.environ", {"MEOW_API_KEY": "legacy-key"}, clear=True)
+    @patch("meow_sdk.cli.Meow")
+    def test_does_not_read_legacy_env_var(self, MockMeow):
+        get_client()
+        MockMeow.assert_called_once_with(
+            base_url="https://meowmeowscratch.com",
+            username=None,
+            api_key=None,
+        )
 
     @patch.dict("os.environ", {}, clear=True)
     @patch("meow_sdk.cli.Meow")
@@ -169,7 +209,15 @@ class TestGetClient:
             api_key=None,
         )
 
-    @patch.dict("os.environ", {"MEOW_USERNAME": "", "MEOW_API_KEY": ""}, clear=True)
+    @patch.dict(
+        "os.environ",
+        {
+            "MEOW_USERNAME": "",
+            "MEOW_PLATFORM_API_KEY": "",
+            "MEOW_APP_API_KEY": "",
+        },
+        clear=True,
+    )
     @patch("meow_sdk.cli.Meow")
     def test_empty_strings_become_none(self, MockMeow):
         get_client()
@@ -213,16 +261,29 @@ class TestCmdGetApp:
 class TestCmdCreateApp:
     def test_create_app_defaults(self, patch_get_client, capsys):
         patch_get_client.create_app.return_value = {"slug": "weather"}
-        cmd_create_app(Namespace(name="Weather", slug="weather", description=None, private=False))
+        cmd_create_app(Namespace(
+            name="Weather", slug="weather", description=None, public=False, private=False,
+        ))
         patch_get_client.create_app.assert_called_once_with(
-            "Weather", "weather", description="", is_public=True
+            "Weather", "weather", description="", is_public=False
         )
 
     def test_create_app_private(self, patch_get_client, capsys):
         patch_get_client.create_app.return_value = {"slug": "secret"}
-        cmd_create_app(Namespace(name="Secret", slug="secret", description="desc", private=True))
+        cmd_create_app(Namespace(
+            name="Secret", slug="secret", description="desc", public=False, private=True,
+        ))
         patch_get_client.create_app.assert_called_once_with(
             "Secret", "secret", description="desc", is_public=False
+        )
+
+    def test_create_app_public(self, patch_get_client, capsys):
+        patch_get_client.create_app.return_value = {"slug": "shared"}
+        cmd_create_app(Namespace(
+            name="Shared", slug="shared", description=None, public=True, private=False,
+        ))
+        patch_get_client.create_app.assert_called_once_with(
+            "Shared", "shared", description="", is_public=True
         )
 
 
@@ -287,22 +348,22 @@ class TestCmdCreateEndpoint:
         patch_get_client.create_endpoint.return_value = {"slug": "readings"}
         cmd_create_endpoint(Namespace(
             app="weather", name="Readings", slug="readings",
-            type="collection", description=None, private=False,
+            type="collection", description=None, public=False,
         ))
         patch_get_client.create_endpoint.assert_called_once_with(
             "weather", "Readings", "readings", "collection",
-            description="", is_public=True,
+            description="", is_public=False,
         )
 
-    def test_create_endpoint_private(self, patch_get_client, capsys):
-        patch_get_client.create_endpoint.return_value = {"slug": "secret"}
+    def test_create_endpoint_public(self, patch_get_client, capsys):
+        patch_get_client.create_endpoint.return_value = {"slug": "readings"}
         cmd_create_endpoint(Namespace(
-            app="weather", name="Secret", slug="secret",
-            type="static", description="my desc", private=True,
+            app="weather", name="Readings", slug="readings",
+            type="collection", description="my desc", public=True,
         ))
         patch_get_client.create_endpoint.assert_called_once_with(
-            "weather", "Secret", "secret", "static",
-            description="my desc", is_public=False,
+            "weather", "Readings", "readings", "collection",
+            description="my desc", is_public=True,
         )
 
 
@@ -829,11 +890,13 @@ class TestCmdWidgetCreate:
     def test_widget_create(self, patch_get_client, capsys):
         patch_get_client.create_dashboard_widget.return_value = {"uuid": "w-new"}
         cmd_widget_create(Namespace(
-            dashboard="my-room", endpoint_id="ep-uuid",
+            dashboard="my-room", app="home", endpoint="settings",
             key_path="lights_on", widget_type="toggle", label="Lights",
+            config=None, sort_order=0,
         ))
         patch_get_client.create_dashboard_widget.assert_called_once_with(
-            "my-room", "ep-uuid", "lights_on", "toggle", "Lights",
+            "my-room", "home", "settings", "lights_on", "toggle", "Lights",
+            config=None, sort_order=0,
         )
 
 
@@ -891,10 +954,10 @@ class TestCmdWidgetDelete:
 
 class TestCmdDashboardData:
     def test_dashboard_data(self, patch_get_client, capsys):
-        patch_get_client.dashboard_data.return_value = {"widgets": [], "endpoints": {}}
+        patch_get_client.dashboard_state.return_value = {"widgets": []}
         cmd_dashboard_data(Namespace(dashboard="my-room"))
-        patch_get_client.dashboard_data.assert_called_once_with("my-room")
-        assert json.loads(capsys.readouterr().out) == {"widgets": [], "endpoints": {}}
+        patch_get_client.dashboard_state.assert_called_once_with("my-room")
+        assert json.loads(capsys.readouterr().out) == {"widgets": []}
 
 
 class TestCmdDashboardPatch:
@@ -1173,7 +1236,7 @@ class TestMain:
             main()
         client.create_endpoint.assert_called_once_with(
             "weather", "Readings", "readings", "collection",
-            description="", is_public=True,
+            description="", is_public=False,
         )
 
     @patch("meow_sdk.cli.get_client")
@@ -1201,10 +1264,14 @@ class TestMain:
         client = MagicMock()
         client.create_dashboard_widget.return_value = {"uuid": "w1"}
         mock_get_client.return_value = client
-        with patch("sys.argv", ["meow", "widget-create", "my-room", "ep-uuid", "lights_on", "toggle", "Lights"]):
+        with patch("sys.argv", [
+            "meow", "widget-create", "my-room", "home", "settings",
+            "lights_on", "toggle", "Lights",
+        ]):
             main()
         client.create_dashboard_widget.assert_called_once_with(
-            "my-room", "ep-uuid", "lights_on", "toggle", "Lights",
+            "my-room", "home", "settings", "lights_on", "toggle", "Lights",
+            config=None, sort_order=0,
         )
 
     @patch("meow_sdk.cli.get_client")
@@ -1588,11 +1655,11 @@ class TestMain:
     @patch("meow_sdk.cli.get_client")
     def test_dashboard_data_via_main(self, mock_get_client, capsys):
         client = MagicMock()
-        client.dashboard_data.return_value = {"widgets": []}
+        client.dashboard_state.return_value = {"widgets": []}
         mock_get_client.return_value = client
         with patch("sys.argv", ["meow", "dashboard-data", "my-room"]):
             main()
-        client.dashboard_data.assert_called_once_with("my-room")
+        client.dashboard_state.assert_called_once_with("my-room")
 
     @patch("meow_sdk.cli.get_client")
     def test_keys_via_main(self, mock_get_client, capsys):

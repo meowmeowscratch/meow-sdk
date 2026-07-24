@@ -1,10 +1,23 @@
 class MeowError(Exception):
     """Something went wrong talking to the meow meow scratch API."""
 
-    def __init__(self, message, status_code=None, response=None):
+    def __init__(
+        self,
+        message,
+        status_code=None,
+        response=None,
+        code=None,
+        field=None,
+        hint=None,
+        details=None,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.response = response
+        self.code = code
+        self.field = field
+        self.hint = hint
+        self.details = details
 
 
 class AuthError(MeowError):

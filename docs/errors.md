@@ -29,7 +29,7 @@ MeowError
 ```python
 from meow_sdk import Meow, AuthError, NotFoundError, MeowError
 
-api = Meow(api_key="mms_your_key_here")
+api = Meow(api_key="YOUR_PLATFORM_TOKEN")
 
 try:
     api.send("my-app", "readings", {"value": 42})
@@ -45,18 +45,24 @@ except MeowError as e:
 
 ## Exception attributes
 
-Every exception has two extra attributes:
+Every exception exposes structured server details when available:
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `status_code` | `int` | HTTP status code (e.g. `400`, `404`) |
 | `response` | `Response` | The full `requests.Response` object |
+| `code` | `str` | Stable machine-readable error code |
+| `field` | `str` | Offending request field, when applicable |
+| `hint` | `str` | Suggested remediation |
+| `details` | `dict` | Structured validation or quota details |
 
 ```python
 try:
     api.send("my-app", "readings", {"value": 42})
 except MeowError as e:
     print(e.status_code)       # 400
+    print(e.code, e.field)
+    print(e.hint)
     print(e.response.json())   # full error body
 ```
 
@@ -70,7 +76,7 @@ The API allows 300 requests per minute with an API key, 120 per minute without.
 import time
 from meow_sdk import Meow, RateLimitError
 
-api = Meow(api_key="mms_your_key_here")
+api = Meow(api_key="YOUR_PLATFORM_TOKEN")
 
 for reading in sensor_data:
     try:

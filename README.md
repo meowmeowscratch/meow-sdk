@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="https://meowmeowscratch.com/meowmeowscratch-text.svg" alt="meow meow scratch" width="300" />
+  <img src="https://meowmeowscratch.com/meowmeowscratch-text.svg" alt="Meow Meow Scratch" width="300" />
 </p>
 
-<h3 align="center">Python SDK for the meow meow scratch API</h3>
+<h3 align="center">Python SDK for the Meow Meow Scratch® API</h3>
 
 <p align="center">
   Build your own APIs and send data from your Raspberry Pi, Arduino, or any Python project.
@@ -35,9 +35,10 @@ pip install meow-sdk
 from meow_sdk import Meow
 
 # 1. Connect with your API key
-api = Meow(api_key="mms_your_key_here")
+api = Meow(api_key="YOUR_PLATFORM_TOKEN")
 
-# 2. Send data
+# 2. Check capacity, then send data
+print(api.limits())
 api.send("weather-station", "readings", {
     "temperature": 22.5,
     "humidity": 65,
@@ -74,7 +75,8 @@ import board
 from meow_sdk import Meow
 
 sensor = adafruit_dht.DHT22(board.D4)
-api = Meow(api_key="mms_your_key_here")
+# Use an app API key on a deployed device so it can access only this app.
+api = Meow(api_key="YOUR_APP_API_KEY")
 
 while True:
     try:
@@ -96,19 +98,21 @@ See the [Raspberry Pi guide](https://meow-sdk.readthedocs.io/raspberry-pi/) for 
 Build real-time dashboards with interactive widgets:
 
 ```python
-api = Meow(api_key="mms_your_key_here")
+api = Meow(api_key="YOUR_PLATFORM_TOKEN")
 
 # Create a dashboard
 api.create_dashboard("My Room", "my-room")
 
 # Add a light switch
 api.create_dashboard_widget(
-    "my-room", "endpoint-uuid",
-    "lights_on", "toggle", "Bedroom Lights"
+    "my-room", "home", "settings",
+    "lights.on", "toggle", "Bedroom Lights"
 )
 
 # Toggle it from your Pi
-api.dashboard_patch("my-room", "endpoint-uuid", "lights_on", True)
+state = api.dashboard_state("my-room")
+widget_uuid = state["widgets"][0]["uuid"]
+api.set_dashboard_widget_value("my-room", widget_uuid, True)
 ```
 
 Widget types: `toggle`, `slider`, `color`, `number`, `text`, `select`, `display`.
@@ -118,7 +122,8 @@ Widget types: `toggle`, `slider`, `color`, `number`, `text`, `select`, `display`
 The SDK includes a full CLI. Configure it once:
 
 ```bash
-export MEOW_API_KEY=mms_your_key_here
+export MEOW_PLATFORM_API_KEY=YOUR_PLATFORM_TOKEN
+export MEOW_APP_API_KEY=YOUR_APP_API_KEY
 export MEOW_USERNAME=jake
 ```
 
@@ -140,17 +145,17 @@ meow csv weather-station readings
 # Manage dashboards
 meow dashboards
 meow dashboard-data my-room
-meow dashboard-patch my-room endpoint-uuid lights_on true
+meow widget-set my-room WIDGET_UUID true
 ```
 
-See the [CLI reference](https://meow-sdk.readthedocs.io/cli/) for all 40+ commands.
+See the [CLI reference](https://meow-sdk.readthedocs.io/cli/) for all 55 commands.
 
 ## Error handling
 
 ```python
 from meow_sdk import Meow, AuthError, NotFoundError, MeowError
 
-api = Meow(api_key="mms_your_key_here")
+api = Meow(api_key="YOUR_PLATFORM_TOKEN")
 
 try:
     api.send("my-app", "readings", {"value": 42})
@@ -166,12 +171,12 @@ except MeowError as e:
 
 | Feature | SDK | CLI |
 |---------|-----|-----|
-| Send & read records | `api.send()` | `meow send` |
+| Send & read records | `api.send()` / `api.send_many()` | `meow send` / `meow send-batch` |
 | Manage apps & endpoints | `api.create_app()` | `meow create-app` |
 | Define field schemas | `api.create_field()` | `meow create-field` |
 | Static payloads | `api.set_payload()` | `meow payload-set` |
 | Proxy endpoints | `api.set_proxy()` | `meow proxy-set` |
-| Control panel dashboards | `api.dashboard_patch()` | `meow dashboard-patch` |
+| Control panel dashboards | `api.set_dashboard_widget_value()` | `meow widget-set` |
 | Webhooks | `api.create_webhook()` | `meow webhook-create` |
 | Encryption | `api.enable_encryption()` | `meow encrypt-enable` |
 | Request logs | `api.request_logs()` | `meow logs` |
@@ -179,7 +184,7 @@ except MeowError as e:
 | Aggregations | `api.aggregate()` | `meow aggregate` |
 | API keys | `api.create_app_key()` | `meow key-create` |
 | Platform tokens | `api.create_platform_token()` | `meow platform-token-create` |
-| Billing | `api.billing_status()` | `meow billing-status` |
+| Plan limits | `api.limits()` | `meow limits` |
 
 ## Links
 

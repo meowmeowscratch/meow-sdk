@@ -9,15 +9,21 @@ The `meow` CLI lets you manage your APIs and send data from the terminal. It ins
 Set your credentials as environment variables:
 
 ```bash
-export MEOW_API_KEY=mms_your_key_here
+export MEOW_PLATFORM_API_KEY=YOUR_PLATFORM_TOKEN
+export MEOW_APP_API_KEY=YOUR_APP_API_KEY
 export MEOW_USERNAME=jake
 ```
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `MEOW_API_KEY` | For writes | Your platform token |
-| `MEOW_USERNAME` | For public reads | Your meow meow scratch username |
+| `MEOW_PLATFORM_API_KEY` | For management | Your account-wide platform token |
+| `MEOW_APP_API_KEY` | For data operations | An app-scoped key used by record, consumer-read, aggregate, CSV, and static-payload commands |
+| `MEOW_USERNAME` | For public reads | Your Meow Meow Scratch® username |
 | `MEOW_URL` | No | API base URL (default: `https://meowmeowscratch.com`) |
+
+The variable names are intentionally role-specific. The CLI does not read
+`MEOW_API_KEY`: management commands use the platform token, while direct data
+and static-payload commands use the app-scoped key.
 
 !!! tip "Add to your shell profile"
     Put the `export` lines in `~/.bashrc` or `~/.zshrc` so they persist across sessions.
@@ -43,6 +49,17 @@ meow send weather-station readings temperature=22.5 humidity=65 location=London
 #   "data": {"temperature": 22.5, "humidity": 65, "location": "London"},
 #   ...
 # }
+```
+
+### Send an atomic batch
+
+Pass an inline JSON array or prefix a JSON file with `@`. A batch contains one
+to 100 bare record objects and is all-or-none.
+
+```bash
+meow send-batch weather-station readings \
+  '[{"temperature":22.5},{"temperature":22.7}]'
+meow send-batch weather-station readings @records.json
 ```
 
 ### Read public data
@@ -115,7 +132,7 @@ meow csv weather-station readings temperature__gte=20 > data.csv
 ```bash
 meow apps                                           # List all apps
 meow get-app <app>                                   # Get app details
-meow create-app <name> <slug> [--description TEXT] [--private]
+meow create-app <name> <slug> [--description TEXT] [--public]
 meow update-app <app> [--name TEXT] [--description TEXT] [--public | --private]
 meow delete-app <app>
 ```
@@ -123,7 +140,7 @@ meow delete-app <app>
 ```bash
 meow apps
 meow create-app "Weather Station" weather-station
-meow create-app "Secret Project" secret --private
+meow create-app "Public Demo" public-demo --public
 meow update-app weather-station --name "My Weather Station"
 meow delete-app old-project
 ```
@@ -135,13 +152,14 @@ meow delete-app old-project
 ```bash
 meow endpoints <app>                                 # List endpoints
 meow get-endpoint <app> <endpoint>                   # Get details
-meow create-endpoint <app> <name> <slug> <type> [--description TEXT] [--private]
+meow create-endpoint <app> <name> <slug> <type> [--description TEXT] [--public]
 meow update-endpoint <app> <endpoint> [--name TEXT] [--public | --private]
                                       [--delay-ms N] [--error-rate F] [--ttl N]
 meow delete-endpoint <app> <endpoint>
 ```
 
 Type is one of: `collection`, `static`, `proxy`.
+Apps and endpoints are private unless `--public` is supplied.
 
 ```bash
 meow endpoints weather-station
@@ -180,13 +198,14 @@ meow delete-field weather-station readings field-uuid-123
 For endpoints with type `static`:
 
 ```bash
-meow payload-get <app> <endpoint>
+meow payload-get <app> <endpoint> [--metadata]
 meow payload-set <app> <endpoint> key=value [key=value ...]
 ```
 
 ```bash
 meow payload-set weather-station status online=true version=1.2
 meow payload-get weather-station status
+meow payload-get weather-station status --metadata
 ```
 
 ---
@@ -223,7 +242,8 @@ meow dashboard-delete <slug>
 
 ```bash
 meow widgets <dashboard>                             # List widgets
-meow widget-create <dashboard> <endpoint_id> <key_path> <type> <label>
+meow widget-create <dashboard> <app> <endpoint> <key_path> <type> <label>
+                   [--config JSON_OR_@FILE] [--sort-order N]
 meow widget-update <dashboard> <uuid> [--label TEXT] [--type TYPE]
                                       [--key-path PATH] [--sort-order N]
 meow widget-delete <dashboard> <uuid>
@@ -235,13 +255,13 @@ Widget types: `toggle`, `color`, `slider`, `number`, `text`, `select`, `display`
 
 ```bash
 meow dashboard-data <dashboard>                      # Read all widget values
-meow dashboard-patch <dashboard> <endpoint_uuid> <key_path> <value>
+meow widget-set <dashboard> <widget_uuid> <value>
 ```
 
 ```bash
 meow dashboard-data my-room
-meow dashboard-patch my-room endpoint-uuid lights_on true
-meow dashboard-patch my-room endpoint-uuid temperature 22.5
+meow widget-set my-room WIDGET_UUID true
+meow widget-set my-room WIDGET_UUID 22.5
 ```
 
 ### Public dashboards
@@ -322,10 +342,10 @@ meow platform-token-revoke <uuid>                    # Revoke
 
 ---
 
-## Billing
+## Limits
 
 ```bash
-meow billing-status                                  # Plan info and usage
+meow limits                                          # Enforced limits and capacity
 ```
 
 ---
@@ -356,5 +376,5 @@ meow send my-app readings temp=22.5 && echo "Sent!"
 
 ```bash
 # Every 5 minutes, send the current date
-*/5 * * * * MEOW_API_KEY=mms_xxx meow send my-app heartbeat ts="$(date -u +\%Y-\%m-\%dT\%H:\%M:\%SZ)"
+*/5 * * * * MEOW_APP_API_KEY=YOUR_APP_API_KEY meow send my-app heartbeat ts="$(date -u +\%Y-\%m-\%dT\%H:\%M:\%SZ)"
 ```

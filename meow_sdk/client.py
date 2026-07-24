@@ -1,3 +1,5 @@
+import warnings
+
 import requests
 
 from .exceptions import AuthError, MeowError, NotFoundError, RateLimitError, ValidationError
@@ -24,29 +26,31 @@ class Meow:
     # ── Internal helpers ────────────────────────────────────────────
 
     def _url(self, path):
+        """Build a full API URL from a relative path."""
         return f"{self.base_url}/api/{path.lstrip('/')}"
 
     def _request(self, method, path, **kwargs):
+        """Send an HTTP request and return the parsed JSON response."""
         url = self._url(path)
         kwargs.setdefault("timeout", self.timeout)
         resp = self.session.request(method, url, **kwargs)
         if resp.status_code == 204:
             return None
         if resp.status_code == 401 or resp.status_code == 403:
-            msg = self._error_message(resp, "Authentication required — did you set your API key?")
-            raise AuthError(msg, status_code=resp.status_code, response=resp)
+            error = self._error_details(resp, "Authentication required — did you set your API key?")
+            raise AuthError(status_code=resp.status_code, response=resp, **error)
         if resp.status_code == 404:
-            msg = self._error_message(resp, "Not found — check your app and endpoint slugs.")
-            raise NotFoundError(msg, status_code=resp.status_code, response=resp)
+            error = self._error_details(resp, "Not found — check your app and endpoint slugs.")
+            raise NotFoundError(status_code=resp.status_code, response=resp, **error)
         if resp.status_code == 400:
-            msg = self._error_message(resp, "Bad request — check your data.")
-            raise ValidationError(msg, status_code=resp.status_code, response=resp)
+            error = self._error_details(resp, "Bad request — check your data.")
+            raise ValidationError(status_code=resp.status_code, response=resp, **error)
         if resp.status_code == 429:
-            msg = self._error_message(resp, "Too many requests — slow down!")
-            raise RateLimitError(msg, status_code=resp.status_code, response=resp)
+            error = self._error_details(resp, "Too many requests — slow down!")
+            raise RateLimitError(status_code=resp.status_code, response=resp, **error)
         if resp.status_code >= 400:
-            msg = self._error_message(resp, f"Request failed (status {resp.status_code}).")
-            raise MeowError(msg, status_code=resp.status_code, response=resp)
+            error = self._error_details(resp, f"Request failed (status {resp.status_code}).")
+            raise MeowError(status_code=resp.status_code, response=resp, **error)
         try:
             return resp.json()
         except ValueError:
@@ -54,15 +58,44 @@ class Meow:
 
     @staticmethod
     def _error_message(resp, fallback):
+        """Extract an error message from a response body."""
+        return Meow._error_details(resp, fallback)["message"]
+
+    @staticmethod
+    def _error_details(resp, fallback):
+        """Extract structured server error metadata for typed exceptions."""
         try:
             body = resp.json()
             if isinstance(body, dict):
-                return body.get("detail") or body.get("error") or str(body)
-            return str(body)
+                error = body.get("error")
+                if isinstance(error, dict):
+                    return {
+                        "message": error.get("message") or fallback,
+                        "code": error.get("code"),
+                        "field": error.get("field"),
+                        "hint": error.get("hint"),
+                        "details": error.get("details") or body,
+                    }
+                return {
+                    "message": body.get("detail") or str(error or body),
+                    "details": body,
+                }
+            return {"message": str(body), "details": body}
         except (ValueError, AttributeError):
-            return fallback
+            return {"message": fallback}
+
+    @staticmethod
+    def _closed_kwargs(kwargs, allowed, operation):
+        """Fail locally when a convenience method receives an unknown field."""
+        unknown = sorted(set(kwargs) - set(allowed))
+        if unknown:
+            raise TypeError(
+                f"{operation} got unsupported field(s): {', '.join(unknown)}"
+            )
+        return kwargs
 
     def _require_username(self):
+        """Raise if no username is configured on this client."""
         if not self.username:
             raise MeowError(
                 "Username is required for reading public endpoints. "
@@ -142,6 +175,20 @@ class Meow:
             json={"data": data},
         )
 
+    def send_many(self, app, endpoint, records):
+        """Atomically create up to 100 records in input order."""
+        if not isinstance(records, list) or not records:
+            raise TypeError("records must be a non-empty list of data dictionaries")
+        if len(records) > 100:
+            raise ValidationError("A batch may contain at most 100 records.")
+        if any(not isinstance(record, dict) for record in records):
+            raise TypeError("every record must be a dictionary")
+        return self._request(
+            "POST",
+            f"apps/{app}/endpoints/{endpoint}/records/batch/",
+            json={"records": [{"data": record} for record in records]},
+        )
+
     def update(self, app, endpoint, record_id, data):
         """Update an existing record.
 
@@ -211,7 +258,7 @@ class Meow:
         """
         return self._request("GET", f"apps/{slug}/")
 
-    def create_app(self, name, slug, description="", is_public=True):
+    def create_app(self, name, slug, description="", is_public=False):
         """Create a new app.
 
         >>> api.create_app("Weather App", "weather-app")
@@ -229,7 +276,15 @@ class Meow:
         >>> api.update_app("weather-app", name="My Weather App")
         >>> api.update_app("weather-app", is_public=False, description="Private app")
         """
-        return self._request("PATCH", f"apps/{slug}/", json=kwargs)
+        return self._request(
+            "PATCH",
+            f"apps/{slug}/",
+            json=self._closed_kwargs(
+                kwargs,
+                {"name", "slug", "description", "is_public", "organization"},
+                "update_app",
+            ),
+        )
 
     def delete_app(self, slug):
         """Delete an app.
@@ -255,7 +310,7 @@ class Meow:
         return self._request("GET", f"apps/{app}/endpoints/{endpoint}/")
 
     def create_endpoint(self, app, name, slug, endpoint_type="collection",
-                        description="", is_public=True):
+                        description="", is_public=False):
         """Create a new endpoint in an app.
 
         >>> api.create_endpoint("weather-app", "Readings", "readings", "collection")
@@ -274,7 +329,19 @@ class Meow:
         >>> api.update_endpoint("weather-app", "readings", name="Sensor Readings")
         >>> api.update_endpoint("weather-app", "readings", is_public=False)
         """
-        return self._request("PATCH", f"apps/{app}/endpoints/{endpoint}/", json=kwargs)
+        return self._request(
+            "PATCH",
+            f"apps/{app}/endpoints/{endpoint}/",
+            json=self._closed_kwargs(
+                kwargs,
+                {
+                    "name", "slug", "endpoint_type", "description", "is_public",
+                    "encryption_enabled", "delay_ms", "error_rate", "ttl_seconds",
+                    "transforms",
+                },
+                "update_endpoint",
+            ),
+        )
 
     def delete_endpoint(self, app, endpoint):
         """Delete an endpoint.
@@ -308,7 +375,7 @@ class Meow:
         if body_template is not None:
             body["body_template"] = body_template
         if jmespath_transform is not None:
-            body["jmespath_transform"] = jmespath_transform
+            body["transform"] = jmespath_transform
         return self._request("PUT", f"apps/{app}/endpoints/{endpoint}/proxy/", json=body)
 
     # ── Encryption ────────────────────────────────────────────────
@@ -416,7 +483,11 @@ class Meow:
         return self._request(
             "PATCH",
             f"apps/{app}/endpoints/{endpoint}/webhooks/{webhook_uuid}/",
-            json=kwargs,
+            json=self._closed_kwargs(
+                kwargs,
+                {"target_url", "events", "secret", "is_active"},
+                "update_webhook",
+            ),
         )
 
     def delete_webhook(self, app, endpoint, webhook_uuid):
@@ -436,6 +507,11 @@ class Meow:
 
         >>> api.get_payload("weather-app", "status")
         """
+        state = self.get_payload_state(app, endpoint)
+        return state.get("data", {}) if isinstance(state, dict) else {}
+
+    def get_payload_state(self, app, endpoint):
+        """Get the static payload HTTP envelope including updated_at."""
         return self._request("GET", f"apps/{app}/endpoints/{endpoint}/payload/")
 
     def set_payload(self, app, endpoint, data):
@@ -456,7 +532,19 @@ class Meow:
         """
         return self._request("GET", f"apps/{app}/endpoints/{endpoint}/fields/")
 
-    def create_field(self, app, endpoint, name, label, field_type, **kwargs):
+    def create_field(
+        self,
+        app,
+        endpoint,
+        name,
+        label,
+        field_type,
+        required=False,
+        default_value=None,
+        options=None,
+        help_text="",
+        sort_order=0,
+    ):
         """Create a new field on a collection endpoint.
 
         Field types: text, textarea, number, boolean, date, datetime,
@@ -466,8 +554,16 @@ class Meow:
         >>> api.create_field("weather-app", "readings", "color", "Color", "color",
         ...                  required=True, options={"format": "hex"})
         """
-        body = {"name": name, "label": label, "field_type": field_type}
-        body.update(kwargs)
+        body = {
+            "name": name,
+            "label": label,
+            "field_type": field_type,
+            "required": required,
+            "default_value": default_value,
+            "options": options,
+            "help_text": help_text,
+            "sort_order": sort_order,
+        }
         return self._request("POST", f"apps/{app}/endpoints/{endpoint}/fields/", json=body)
 
     def update_field(self, app, endpoint, field_uuid, **kwargs):
@@ -478,7 +574,14 @@ class Meow:
         return self._request(
             "PATCH",
             f"apps/{app}/endpoints/{endpoint}/fields/{field_uuid}/",
-            json=kwargs,
+            json=self._closed_kwargs(
+                kwargs,
+                {
+                    "name", "label", "field_type", "required", "default_value",
+                    "options", "help_text", "sort_order",
+                },
+                "update_field",
+            ),
         )
 
     def delete_field(self, app, endpoint, field_uuid):
@@ -532,7 +635,18 @@ class Meow:
 
         >>> api.update_dashboard("my-room", name="Living Room")
         """
-        return self._request("PATCH", f"dashboards/{slug}/", json=kwargs)
+        return self._request(
+            "PATCH",
+            f"dashboards/{slug}/",
+            json=self._closed_kwargs(
+                kwargs,
+                {
+                    "name", "slug", "description", "is_public",
+                    "share_token_expires_at",
+                },
+                "update_dashboard",
+            ),
+        )
 
     def delete_dashboard(self, slug):
         """Delete a dashboard.
@@ -550,22 +664,57 @@ class Meow:
         """
         return self._request("GET", f"dashboards/{dashboard}/widgets/")
 
-    def create_dashboard_widget(self, dashboard, endpoint_id, key_path,
-                                widget_type, label, **kwargs):
+    def create_dashboard_widget(
+        self,
+        dashboard,
+        app,
+        endpoint,
+        key_path,
+        widget_type,
+        label,
+        config=None,
+        sort_order=0,
+    ):
         """Add a widget to a dashboard.
 
         Widget types: toggle, color, slider, number, text, select, display.
 
-        >>> api.create_dashboard_widget("my-room", "endpoint-uuid",
-        ...     "lights_on", "toggle", "Lights On")
+        >>> api.create_dashboard_widget(
+        ...     "my-room", "home", "settings",
+        ...     "lights.on", "toggle", "Lights On"
+        ... )
         """
+        body = {
+            "key_path": key_path,
+            "widget_type": widget_type,
+            "label": label,
+            "config": config or {},
+            "sort_order": sort_order,
+        }
+        return self._request(
+            "POST",
+            f"dashboards/{dashboard}/widgets/{app}/{endpoint}/",
+            json=body,
+        )
+
+    def create_dashboard_widget_legacy(
+        self, dashboard, endpoint_id, key_path, widget_type, label, **kwargs
+    ):
+        """Create a UUID-bound widget through the deprecated legacy route."""
+        warnings.warn(
+            "Use create_dashboard_widget with app and endpoint slugs.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         body = {
             "endpoint_id": endpoint_id,
             "key_path": key_path,
             "widget_type": widget_type,
             "label": label,
         }
-        body.update(kwargs)
+        body.update(
+            self._closed_kwargs(kwargs, {"config", "sort_order"}, "legacy widget create")
+        )
         return self._request("POST", f"dashboards/{dashboard}/widgets/", json=body)
 
     def update_dashboard_widget(self, dashboard, widget_uuid, **kwargs):
@@ -579,7 +728,11 @@ class Meow:
         return self._request(
             "PATCH",
             f"dashboards/{dashboard}/widgets/{widget_uuid}/",
-            json=kwargs,
+            json=self._closed_kwargs(
+                kwargs,
+                {"label", "widget_type", "key_path", "config", "sort_order"},
+                "update_dashboard_widget",
+            ),
         )
 
     def delete_dashboard_widget(self, dashboard, widget_uuid):
@@ -605,6 +758,18 @@ class Meow:
         """
         return self._request("GET", f"dashboards/{dashboard}/data/")
 
+    def dashboard_state(self, dashboard):
+        """Get canonical widget bindings and only their resolved values."""
+        return self._request("GET", f"dashboards/{dashboard}/state/")
+
+    def set_dashboard_widget_value(self, dashboard, widget_uuid, value):
+        """Update the static payload value bound to a widget."""
+        return self._request(
+            "PATCH",
+            f"dashboards/{dashboard}/widgets/{widget_uuid}/value/",
+            json={"value": value},
+        )
+
     def dashboard_patch(self, dashboard, endpoint_uuid, key_path, value):
         """Update a single value through a dashboard widget.
 
@@ -625,13 +790,17 @@ class Meow:
         """
         return self._request("GET", f"apps/{app}/keys/")
 
-    def create_app_key(self, app):
+    def create_app_key(self, app, name="Device key", scopes=None):
         """Create a new API key scoped to an app. Save the returned key — shown only once!
 
         >>> result = api.create_app_key("weather-app")
         >>> result["key"]  # save this!
         """
-        return self._request("POST", f"apps/{app}/keys/")
+        return self._request(
+            "POST",
+            f"apps/{app}/keys/",
+            json={"name": name, "scopes": scopes or ["read", "write"]},
+        )
 
     def delete_app_key(self, app, key_uuid):
         """Deactivate an app-scoped API key.
@@ -673,7 +842,20 @@ class Meow:
         >>> status["plan"]
         'free'
         """
+        warnings.warn(
+            "billing_status requires a browser session; use limits() with SDK tokens.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self._request("GET", "billing/status/")
+
+    def limits(self):
+        """Get enforced plan limits before provisioning resources."""
+        return self._request("GET", "limits/")
+
+    def auth_context(self):
+        """Describe the configured credential without exposing it."""
+        return self._request("GET", "auth/context/")
 
     # ── Public Dashboard ─────────────────────────────────────────
 
@@ -686,4 +868,4 @@ class Meow:
         >>> data["dashboard"]["name"]
         'My Room'
         """
-        return self._request("GET", f"v1/dashboards/{share_token}/")
+        return self._request("GET", f"v2/dashboards/{share_token}/")

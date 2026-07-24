@@ -16,7 +16,7 @@ This also installs the `meow` CLI tool.
 
 ## 2. Get your API key
 
-Sign up at [meowmeowscratch.com](https://meowmeowscratch.com), then go to **Account > Platform Tokens** and create a token. Copy the key — it starts with `mms_`.
+Sign up at [meowmeowscratch.com](https://meowmeowscratch.com), then go to **Account > Platform Tokens** and create a token. Store the key when it is created; the full value is only shown once.
 
 !!! warning "Save your key"
     The full key is only shown once. If you lose it, revoke it and create a new one.
@@ -28,7 +28,7 @@ Sign up at [meowmeowscratch.com](https://meowmeowscratch.com), then go to **Acco
 ```python
 from meow_sdk import Meow
 
-api = Meow(api_key="mms_your_key_here")
+api = Meow(api_key="YOUR_PLATFORM_TOKEN")
 ```
 
 The client has three optional parameters:
@@ -44,10 +44,10 @@ The client has three optional parameters:
 api = Meow(username="jake")
 
 # Read + write
-api = Meow(username="jake", api_key="mms_your_key_here")
+api = Meow(username="jake", api_key="YOUR_PLATFORM_TOKEN")
 
 # Local development
-api = Meow("http://localhost:8099", api_key="mms_your_key_here")
+api = Meow("http://localhost:8099", api_key="YOUR_PLATFORM_TOKEN")
 ```
 
 ---
@@ -69,6 +69,9 @@ api.create_field("weather-station", "readings",
 api.create_field("weather-station", "readings",
     "humidity", "Humidity", "number")
 ```
+
+Apps and endpoints are private by default. Pass `is_public=True` only when the
+data is safe for anonymous internet access.
 
 !!! tip
     You can also create apps and endpoints from the [web dashboard](https://meowmeowscratch.com) — the SDK and website are interchangeable.
@@ -120,7 +123,8 @@ Anyone can read this URL — from a browser, curl, another Raspberry Pi, or a ph
 Set your credentials once:
 
 ```bash
-export MEOW_API_KEY=mms_your_key_here
+export MEOW_PLATFORM_API_KEY=YOUR_PLATFORM_TOKEN
+export MEOW_APP_API_KEY=YOUR_APP_API_KEY
 export MEOW_USERNAME=jake
 ```
 

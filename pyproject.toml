@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "meow-sdk"
-version = "0.6.0"
-description = "Python client for the meow meow scratch API — build APIs and send data from your Raspberry Pi!"
+version = "0.7.0"
+description = "Python SDK and CLI for Meow Meow Scratch APIs, dashboards, and connected projects."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.8"
-authors = [{ name = "meow meow scratch" }]
+authors = [{ name = "Meow Meow Scratch", email = "meowmeowscratch@users.noreply.github.com" }]
 keywords = ["api", "raspberry-pi", "iot", "kids", "education", "cli"]
 classifiers = [
     "Development Status :: 3 - Alpha",

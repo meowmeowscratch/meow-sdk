@@ -1,195 +1,164 @@
 # Dashboards
 
-Dashboards are interactive control panels that let you read and write data through widgets. Each widget connects to a key in one of your endpoints — toggle a light, slide a temperature, pick a color, all from the web or your phone.
+Dashboards turn endpoint values into web and mobile controls. A widget binds to
+an app slug, endpoint slug, and dot-separated key path. Endpoint UUIDs are an
+internal implementation detail and are not needed.
 
----
+## Choose the endpoint type
 
-## Overview
+- **Static endpoints** support interactive controls and read-only displays.
+- **Collection endpoints** support displays from the latest record.
+- **Proxy endpoints** do not support widgets.
 
-A dashboard can pull widgets from **multiple endpoints across different apps**. This lets you build a single control panel for your whole setup — bedroom lights, kitchen temperature, garage door — all in one place.
+Static endpoints are the best fit for remote device configuration. A dashboard
+updates the settings document, while a Raspberry Pi reads the same document
+with an app API key.
 
+```text
+dashboard slider -> static settings endpoint <- Raspberry Pi polls
 ```
-Dashboard: "My Room"
-├── Toggle widget   → bedroom-lights endpoint → "lights_on" key
-├── Slider widget   → thermostat endpoint     → "target_temp" key
-├── Color widget    → led-strip endpoint      → "color" key
-└── Display widget  → sensors endpoint        → "temperature" key
-```
 
----
-
-## Create a dashboard
+## Create settings and a dashboard
 
 ```python
 from meow_sdk import Meow
 
-api = Meow(api_key="mms_your_key_here")
+api = Meow(api_key="YOUR_PLATFORM_TOKEN")
 
-api.create_dashboard("My Room", "my-room", description="Bedroom controls")
+api.create_app("Home", "home")
+api.create_endpoint("home", "Settings", "settings", endpoint_type="static")
+api.set_payload("home", "settings", {
+    "lights": {"on": False, "brightness": 50},
+    "camera": {"thresholds": {"confidence": 0.65}},
+})
+
+api.create_dashboard("Home Controls", "home-controls")
 ```
 
----
+Resources are private unless `is_public=True` is deliberately supplied.
 
 ## Add widgets
 
-Each widget needs:
-
-- **endpoint_id** — the UUID of the endpoint it reads/writes
-- **key_path** — which key in the endpoint's data to bind to
-- **widget_type** — how to display and interact with the value
-- **label** — what the user sees
-
 ```python
-# On/off toggle for a light
-api.create_dashboard_widget(
-    "my-room", "endpoint-uuid",
-    "lights_on", "toggle", "Bedroom Lights"
+light = api.create_dashboard_widget(
+    "home-controls",
+    "home",
+    "settings",
+    "lights.on",
+    "toggle",
+    "Lights",
 )
 
-# Temperature slider with min/max
-api.create_dashboard_widget(
-    "my-room", "endpoint-uuid",
-    "target_temp", "slider", "Temperature",
-    config={"min": 15, "max": 30}
-)
-
-# Color picker for an LED strip
-api.create_dashboard_widget(
-    "my-room", "endpoint-uuid",
-    "color", "color", "LED Color"
-)
-
-# Read-only display
-api.create_dashboard_widget(
-    "my-room", "endpoint-uuid",
-    "temperature", "display", "Current Temp"
+confidence = api.create_dashboard_widget(
+    "home-controls",
+    "home",
+    "settings",
+    "camera.thresholds.confidence",
+    "slider",
+    "Tracking confidence",
+    config={"min": 0, "max": 1, "step": 0.05},
 )
 ```
 
-### Widget types
+A key path uses dot notation. Literal periods in JSON key names are unsupported.
+Static writes create missing dictionaries, but never replace a non-object
+intermediate value silently.
 
-| Type | Interaction | Best for |
-|------|------------|---------|
-| `toggle` | On/off switch | Lights, motors, relays |
-| `slider` | Drag to set a number | Temperature, brightness, volume |
-| `number` | Type a number | Precise values, thresholds |
-| `text` | Type text | Names, messages, labels |
-| `color` | Color picker | RGB LEDs, themes |
-| `select` | Dropdown menu | Modes, presets, options |
-| `display` | Read-only value | Sensor readings, status |
+## Widget configuration
 
----
+| Type | Configuration |
+|---|---|
+| `toggle` | none |
+| `color` | none |
+| `slider` | `min`, `max`, and positive `step` |
+| `number` | optional `min`, `max`, and positive `step` |
+| `text` | optional `placeholder` and positive `max_length` |
+| `select` | `choices: [{"value": "...", "label": "..."}]` |
+| `display` | optional `prefix` and `suffix` |
 
-## Read data
+Unknown keys are rejected. Slider bounds belong inside `config`; passing
+top-level `min`, `max`, or `step` returns a validation error.
 
-Get current values for all widgets at once:
+## Read state
 
 ```python
-data = api.dashboard_data("my-room")
+state = api.dashboard_state("home-controls")
 
-# Dashboard info
-print(data["dashboard"]["name"])
-
-# All widgets and their current values
-for widget in data["widgets"]:
-    print(f"{widget['label']}: {widget.get('current_value')}")
-
-# Raw endpoint data
-print(data["endpoints"])
+for widget in state["widgets"]:
+    binding = widget["binding"]
+    current = widget["state"]
+    print(binding["key_path"], current["has_value"], current["value"])
 ```
 
----
+The state response returns only configured widget values. It does not expose
+endpoint UUIDs or unbound sibling keys.
 
-## Update values
-
-Write a single value through a widget:
+## Change a value
 
 ```python
-# Turn on the lights
-api.dashboard_patch("my-room", "endpoint-uuid", "lights_on", True)
-
-# Set temperature to 22
-api.dashboard_patch("my-room", "endpoint-uuid", "target_temp", 22)
-
-# Change LED color
-api.dashboard_patch("my-room", "endpoint-uuid", "color", "#ff6600")
+api.set_dashboard_widget_value("home-controls", light["uuid"], True)
+api.set_dashboard_widget_value("home-controls", confidence["uuid"], 0.7)
 ```
 
----
+The widget already owns its endpoint and key-path binding, so a write needs only
+the dashboard slug, widget UUID, and new value. The API validates the value
+against the widget type and configuration.
 
-## Raspberry Pi example
+## Raspberry Pi runtime
 
-A Pi that reads its dashboard and controls GPIO pins:
+Use a platform token for provisioning. Give the deployed device an app API key
+limited to `home`.
 
 ```python
+import os
 import time
-import RPi.GPIO as GPIO
 from meow_sdk import Meow
 
-GPIO.setmode(GPIO.BCM)
-GPIO.setup(17, GPIO.OUT)  # LED on pin 17
-
-api = Meow(api_key="mms_your_key_here")
+device = Meow(api_key=os.environ["MEOW_APP_API_KEY"])
 
 while True:
-    data = api.dashboard_data("my-room")
-
-    for widget in data["widgets"]:
-        if widget["key_path"] == "lights_on":
-            GPIO.output(17, widget.get("current_value", False))
-
-    time.sleep(2)
+    settings = device.get_payload("home", "settings")
+    confidence = settings["camera"]["thresholds"]["confidence"]
+    apply_confidence_threshold(confidence)
+    time.sleep(60)
 ```
 
----
+`get_payload()` returns the bare JSON document. Use `get_payload_state()` when
+you also need `updated_at`.
 
 ## Public dashboards
 
-Share a read-only view of your dashboard with a public link:
+Public sharing is read-only. Anyone holding the share token can read the
+configured widget state, but cannot use the authenticated widget-value route.
 
 ```python
-# Anyone with the share token can view (no API key needed)
-data = api.public_dashboard("share-token-abc")
-print(data["dashboard"]["name"])
-print(data["widgets"])
+shared = Meow().public_dashboard("share-token")
 ```
-
----
 
 ## CLI
 
 ```bash
-# Create and manage
-meow dashboard-create "My Room" my-room
-meow dashboards
-meow dashboard-get my-room
-
-# Add widgets
-meow widget-create my-room endpoint-uuid lights_on toggle "Bedroom Lights"
-
-# Read and write
-meow dashboard-data my-room
-meow dashboard-patch my-room endpoint-uuid lights_on true
-
-# Public view
-meow public-dashboard share-token-abc
+meow dashboard-create "Home Controls" home-controls
+meow widget-create home-controls home settings lights.on toggle "Lights"
+meow widget-create home-controls home settings camera.thresholds.confidence \
+  slider "Tracking confidence" --config '{"min":0,"max":1,"step":0.05}'
+meow dashboard-data home-controls
+meow widget-set home-controls WIDGET_UUID true
 ```
 
----
-
-## Full API
+## Method reference
 
 | Method | Description |
-|--------|-------------|
+|---|---|
 | `api.dashboards()` | List dashboards |
-| `api.get_dashboard(slug)` | Get dashboard details |
+| `api.get_dashboard(slug)` | Get dashboard details and capacity |
 | `api.create_dashboard(name, slug, description="")` | Create a dashboard |
 | `api.update_dashboard(slug, **kwargs)` | Update a dashboard |
 | `api.delete_dashboard(slug)` | Delete a dashboard |
-| `api.dashboard_widgets(dashboard)` | List widgets |
-| `api.create_dashboard_widget(dashboard, endpoint_id, key_path, widget_type, label, **kwargs)` | Add a widget |
-| `api.update_dashboard_widget(dashboard, widget_uuid, **kwargs)` | Update a widget |
+| `api.dashboard_widgets(dashboard)` | List widgets through the compatibility route |
+| `api.create_dashboard_widget(dashboard, app, endpoint, key_path, widget_type, label, config=None, sort_order=0)` | Add a slug-bound widget |
+| `api.update_dashboard_widget(dashboard, widget_uuid, **kwargs)` | Update widget presentation or key path |
 | `api.delete_dashboard_widget(dashboard, widget_uuid)` | Remove a widget |
-| `api.dashboard_data(dashboard)` | Read all widget values |
-| `api.dashboard_patch(dashboard, endpoint_uuid, key_path, value)` | Write a value |
-| `api.public_dashboard(share_token)` | Read a public dashboard |
+| `api.dashboard_state(dashboard)` | Read configured values |
+| `api.set_dashboard_widget_value(dashboard, widget_uuid, value)` | Write through an interactive widget |
+| `api.public_dashboard(share_token)` | Read a shared dashboard |

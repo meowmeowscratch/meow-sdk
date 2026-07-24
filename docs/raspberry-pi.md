@@ -1,6 +1,6 @@
 # Raspberry Pi
 
-Connect sensors, buttons, LEDs, and more to your meow meow scratch API.
+Connect sensors, buttons, LEDs, and more to your Meow Meow Scratch® API.
 
 ---
 
@@ -15,7 +15,7 @@ pip install meow-sdk
 Set your API key:
 
 ```bash
-export MEOW_API_KEY=mms_your_key_here
+export MEOW_APP_API_KEY=YOUR_APP_API_KEY
 ```
 
 !!! tip "Python version"
@@ -36,7 +36,7 @@ import board
 from meow_sdk import Meow
 
 sensor = adafruit_dht.DHT22(board.D4)  # GPIO pin 4
-api = Meow(api_key="mms_your_key_here")
+api = Meow(api_key="YOUR_APP_API_KEY")
 
 while True:
     try:
@@ -65,7 +65,7 @@ from meow_sdk import Meow
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(17, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-api = Meow(api_key="mms_your_key_here")
+api = Meow(api_key="YOUR_APP_API_KEY")
 count = 0
 
 def on_press(channel):
@@ -99,14 +99,11 @@ from meow_sdk import Meow
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(17, GPIO.OUT)
 
-api = Meow(api_key="mms_your_key_here")
+api = Meow(api_key="YOUR_APP_API_KEY")
 
 while True:
-    data = api.dashboard_data("my-room")
-
-    for widget in data["widgets"]:
-        if widget["key_path"] == "led_on":
-            GPIO.output(17, widget.get("current_value", False))
+    settings = api.get_payload("home", "settings")
+    GPIO.output(17, settings.get("led_on", False))
 
     time.sleep(2)
 ```
@@ -114,9 +111,10 @@ while True:
 Set up the dashboard:
 
 ```python
-api.create_dashboard("My Room", "my-room")
-api.create_dashboard_widget(
-    "my-room", "endpoint-uuid",
+admin = Meow(api_key="YOUR_PLATFORM_TOKEN")
+admin.create_dashboard("My Room", "my-room")
+admin.create_dashboard_widget(
+    "my-room", "home", "settings",
     "led_on", "toggle", "LED Light"
 )
 ```
@@ -141,7 +139,7 @@ cam = Picamera2()
 cam.configure(cam.create_still_configuration())
 cam.start()
 
-api = Meow(api_key="mms_your_key_here")
+api = Meow(api_key="YOUR_APP_API_KEY")
 
 while True:
     cam.capture_file("/tmp/snapshot.jpg")
@@ -166,7 +164,7 @@ Don't need a long-running script? Use the CLI in a cron job:
 
 ```bash
 # Send a heartbeat every 5 minutes
-*/5 * * * * MEOW_API_KEY=mms_xxx meow send my-pi heartbeat ts="$(date -u +\%Y-\%m-\%dT\%H:\%M:\%SZ)" host="$(hostname)"
+*/5 * * * * MEOW_APP_API_KEY=YOUR_APP_API_KEY meow send my-pi heartbeat ts="$(date -u +\%Y-\%m-\%dT\%H:\%M:\%SZ)" host="$(hostname)"
 ```
 
 Or read a value from a shell command:
@@ -188,13 +186,13 @@ sudo nano /etc/systemd/system/meow-sensor.service
 
 ```ini
 [Unit]
-Description=meow meow scratch sensor
+Description=Meow Meow Scratch sensor
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 User=pi
-Environment=MEOW_API_KEY=mms_your_key_here
+Environment=MEOW_APP_API_KEY=YOUR_APP_API_KEY
 ExecStart=/usr/bin/python3 /home/pi/sensor.py
 Restart=always
 RestartSec=10

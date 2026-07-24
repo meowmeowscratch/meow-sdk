@@ -1,6 +1,6 @@
 # meow-sdk
 
-**Python SDK and CLI for the [meow meow scratch](https://meowmeowscratch.com) API.**
+**Python SDK and CLI for the [Meow Meow Scratch®](https://meowmeowscratch.com) API.**
 
 Build your own APIs, send sensor data from your Raspberry Pi, and control hardware from anywhere — all in a few lines of Python.
 
@@ -23,7 +23,7 @@ Requires Python 3.8+. No extra dependencies beyond `requests`.
     ```python
     from meow_sdk import Meow
 
-    api = Meow(api_key="mms_your_key_here")
+    api = Meow(api_key="YOUR_PLATFORM_TOKEN")
 
     api.send("weather-station", "readings", {
         "temperature": 22.5,
@@ -44,7 +44,8 @@ Requires Python 3.8+. No extra dependencies beyond `requests`.
 === "CLI"
 
     ```bash
-    export MEOW_API_KEY=mms_your_key_here
+    export MEOW_PLATFORM_API_KEY=YOUR_PLATFORM_TOKEN
+    export MEOW_APP_API_KEY=YOUR_APP_API_KEY
 
     meow send weather-station readings temperature=22.5 humidity=65
     meow get weather-station readings

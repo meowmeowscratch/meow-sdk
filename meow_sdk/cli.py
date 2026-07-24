@@ -1,7 +1,8 @@
 """meow meow scratch CLI — send and read API data from your terminal.
 
 Configure with environment variables:
-    export MEOW_API_KEY=your-api-key
+    export MEOW_PLATFORM_API_KEY=your-platform-token
+    export MEOW_APP_API_KEY=your-app-api-key
     export MEOW_USERNAME=your-username
     export MEOW_URL=https://meowmeowscratch.com  (optional)
 
@@ -23,10 +24,16 @@ import sys
 from .client import Meow
 
 
-def get_client():
+def get_client(credential="platform"):
+    """Create a Meow client with the credential appropriate to the operation."""
     base_url = os.environ.get('MEOW_URL', 'https://meowmeowscratch.com')
     username = os.environ.get('MEOW_USERNAME', '')
-    api_key = os.environ.get('MEOW_API_KEY', '')
+    env_name = (
+        'MEOW_APP_API_KEY'
+        if credential == 'app'
+        else 'MEOW_PLATFORM_API_KEY'
+    )
+    api_key = os.environ.get(env_name, '')
     return Meow(base_url=base_url, username=username or None, api_key=api_key or None)
 
 
@@ -47,25 +54,43 @@ def _parse_filters(pairs):
 
 
 def _print(data):
+    """Pretty-print a data structure as JSON."""
     print(json.dumps(data, indent=2, default=str))
 
 
 def cmd_send(args):
-    client = get_client()
+    """Send a record to a collection endpoint."""
+    client = get_client("app")
     data = _parse_filters(args.data)
     result = client.send(args.app, args.endpoint, data)
     _print(result)
 
 
+def _load_json_argument(value):
+    """Load JSON from an inline value or an @path file reference."""
+    if value.startswith("@"):
+        with open(value[1:], "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    return json.loads(value)
+
+
+def cmd_send_batch(args):
+    """Atomically send a JSON array of record objects."""
+    records = _load_json_argument(args.records)
+    _print(get_client("app").send_many(args.app, args.endpoint, records))
+
+
 def cmd_get(args):
-    client = get_client()
+    """Read data from a public endpoint."""
+    client = get_client("app")
     filters = _parse_filters(args.filters)
     result = client.get(args.app, args.endpoint, **filters)
     _print(result)
 
 
 def cmd_aggregate(args):
-    client = get_client()
+    """Run aggregate functions on a collection endpoint."""
+    client = get_client("app")
     aggregates = [a.strip() for a in args.aggregates.split(',')]
     filters = _parse_filters(args.filters)
     result = client.aggregate(args.app, args.endpoint, aggregates,
@@ -74,12 +99,14 @@ def cmd_aggregate(args):
 
 
 def cmd_csv(args):
-    client = get_client()
+    """Download records as CSV from a collection endpoint."""
+    client = get_client("app")
     filters = _parse_filters(args.filters)
     print(client.export_csv(args.app, args.endpoint, **filters))
 
 
 def cmd_apps(args):
+    """List all apps."""
     client = get_client()
     result = client.apps()
     if isinstance(result, list):
@@ -90,25 +117,29 @@ def cmd_apps(args):
 
 
 def cmd_records(args):
-    client = get_client()
+    """List records for an endpoint."""
+    client = get_client("app")
     result = client.records(args.app, args.endpoint, limit=args.limit)
     _print(result)
 
 
 def cmd_get_app(args):
+    """Get details for an app."""
     client = get_client()
     _print(client.get_app(args.app))
 
 
 def cmd_create_app(args):
+    """Create a new app."""
     client = get_client()
     result = client.create_app(args.name, args.slug,
                                description=args.description or '',
-                               is_public=not args.private)
+                               is_public=args.public)
     _print(result)
 
 
 def cmd_update_app(args):
+    """Update an existing app."""
     client = get_client()
     kwargs = {}
     if args.name is not None:
@@ -124,12 +155,14 @@ def cmd_update_app(args):
 
 
 def cmd_delete_app(args):
+    """Delete an app."""
     client = get_client()
     client.delete_app(args.app)
     print(f'Deleted app: {args.app}')
 
 
 def cmd_endpoints(args):
+    """List endpoints in an app."""
     client = get_client()
     result = client.endpoints(args.app)
     if isinstance(result, list):
@@ -141,19 +174,22 @@ def cmd_endpoints(args):
 
 
 def cmd_get_endpoint(args):
+    """Get endpoint details."""
     client = get_client()
     _print(client.get_endpoint(args.app, args.endpoint))
 
 
 def cmd_create_endpoint(args):
+    """Create a new endpoint."""
     client = get_client()
     result = client.create_endpoint(args.app, args.name, args.slug,
                                      args.type, description=args.description or '',
-                                     is_public=not args.private)
+                                     is_public=args.public)
     _print(result)
 
 
 def cmd_update_endpoint(args):
+    """Update an existing endpoint."""
     client = get_client()
     kwargs = {}
     if args.name is not None:
@@ -175,12 +211,14 @@ def cmd_update_endpoint(args):
 
 
 def cmd_delete_endpoint(args):
+    """Delete an endpoint."""
     client = get_client()
     client.delete_endpoint(args.app, args.endpoint)
     print(f'Deleted endpoint: {args.app}/{args.endpoint}')
 
 
 def cmd_fields(args):
+    """List fields for a collection endpoint."""
     client = get_client()
     result = client.fields(args.app, args.endpoint)
     if isinstance(result, list):
@@ -192,6 +230,7 @@ def cmd_fields(args):
 
 
 def cmd_create_field(args):
+    """Add a field to a collection endpoint."""
     client = get_client()
     kwargs = {}
     if args.required:
@@ -202,6 +241,7 @@ def cmd_create_field(args):
 
 
 def cmd_update_field(args):
+    """Update a field."""
     client = get_client()
     kwargs = {}
     if args.label is not None:
@@ -213,47 +253,58 @@ def cmd_update_field(args):
 
 
 def cmd_delete_field(args):
+    """Delete a field."""
     client = get_client()
     client.delete_field(args.app, args.endpoint, args.uuid)
     print(f'Deleted field: {args.uuid}')
 
 
 def cmd_update_record(args):
-    client = get_client()
+    """Update an existing record."""
+    client = get_client("app")
     data = _parse_filters(args.data)
     result = client.update(args.app, args.endpoint, args.uuid, data)
     _print(result)
 
 
 def cmd_delete_record(args):
-    client = get_client()
+    """Delete a record."""
+    client = get_client("app")
     client.delete_record(args.app, args.endpoint, args.uuid)
     print(f'Deleted record: {args.uuid}')
 
 
 def cmd_get_record(args):
-    client = get_client()
+    """Get a single record by UUID."""
+    client = get_client("app")
     _print(client.get_record(args.app, args.endpoint, args.uuid))
 
 
 def cmd_payload_get(args):
-    client = get_client()
-    _print(client.get_payload(args.app, args.endpoint))
+    """Get the static payload for an endpoint."""
+    client = get_client("app")
+    if getattr(args, "metadata", False):
+        _print(client.get_payload_state(args.app, args.endpoint))
+    else:
+        _print(client.get_payload(args.app, args.endpoint))
 
 
 def cmd_payload_set(args):
-    client = get_client()
+    """Set the static payload for an endpoint."""
+    client = get_client("app")
     data = _parse_filters(args.data)
     result = client.set_payload(args.app, args.endpoint, data)
     _print(result)
 
 
 def cmd_proxy_get(args):
+    """Get proxy configuration for an endpoint."""
     client = get_client()
     _print(client.get_proxy(args.app, args.endpoint))
 
 
 def cmd_proxy_set(args):
+    """Set proxy upstream URL for an endpoint."""
     client = get_client()
     kwargs = {}
     if args.method:
@@ -263,11 +314,13 @@ def cmd_proxy_set(args):
 
 
 def cmd_encryption(args):
+    """Get encryption status for an endpoint."""
     client = get_client()
     _print(client.get_encryption(args.app, args.endpoint))
 
 
 def cmd_encrypt_enable(args):
+    """Enable encryption on an endpoint."""
     client = get_client()
     result = client.enable_encryption(args.app, args.endpoint)
     _print(result)
@@ -276,17 +329,20 @@ def cmd_encrypt_enable(args):
 
 
 def cmd_encrypt_disable(args):
+    """Disable encryption on an endpoint."""
     client = get_client()
     client.disable_encryption(args.app, args.endpoint)
     print('Encryption disabled.')
 
 
 def cmd_logs(args):
+    """View request logs for an endpoint."""
     client = get_client()
     _print(client.request_logs(args.app, args.endpoint))
 
 
 def cmd_webhooks(args):
+    """List webhooks for an endpoint."""
     client = get_client()
     result = client.webhooks(args.app, args.endpoint)
     if isinstance(result, list):
@@ -299,6 +355,7 @@ def cmd_webhooks(args):
 
 
 def cmd_webhook_create(args):
+    """Create a webhook subscription."""
     client = get_client()
     events = [e.strip() for e in args.events.split(',')]
     result = client.create_webhook(args.app, args.endpoint, args.url, events,
@@ -307,17 +364,20 @@ def cmd_webhook_create(args):
 
 
 def cmd_webhook_delete(args):
+    """Delete a webhook."""
     client = get_client()
     client.delete_webhook(args.app, args.endpoint, args.uuid)
     print(f'Deleted webhook: {args.uuid}')
 
 
 def cmd_webhook_get(args):
+    """Get a single webhook by UUID."""
     client = get_client()
     _print(client.get_webhook(args.app, args.endpoint, args.uuid))
 
 
 def cmd_webhook_update(args):
+    """Update a webhook."""
     client = get_client()
     kwargs = {}
     if args.url is not None:
@@ -333,11 +393,13 @@ def cmd_webhook_update(args):
 
 
 def cmd_public_dashboard(args):
+    """Get a public dashboard by share token."""
     client = get_client()
     _print(client.public_dashboard(args.token))
 
 
 def cmd_field_types(args):
+    """List available field types."""
     client = get_client()
     result = client.field_types()
     if isinstance(result, list):
@@ -351,6 +413,7 @@ def cmd_field_types(args):
 
 
 def cmd_dashboards(args):
+    """List all dashboards."""
     client = get_client()
     result = client.dashboards()
     if isinstance(result, list):
@@ -361,11 +424,13 @@ def cmd_dashboards(args):
 
 
 def cmd_dashboard_get(args):
+    """Get dashboard details."""
     client = get_client()
     _print(client.get_dashboard(args.slug))
 
 
 def cmd_dashboard_create(args):
+    """Create a new dashboard."""
     client = get_client()
     result = client.create_dashboard(args.name, args.slug,
                                       description=args.description or '')
@@ -373,6 +438,7 @@ def cmd_dashboard_create(args):
 
 
 def cmd_dashboard_update(args):
+    """Update an existing dashboard."""
     client = get_client()
     kwargs = {}
     if args.name is not None:
@@ -384,31 +450,44 @@ def cmd_dashboard_update(args):
 
 
 def cmd_dashboard_delete(args):
+    """Delete a dashboard."""
     client = get_client()
     client.delete_dashboard(args.slug)
     print(f'Deleted dashboard: {args.slug}')
 
 
 def cmd_widgets(args):
+    """List widgets in a dashboard."""
     client = get_client()
     _print(client.dashboard_widgets(args.dashboard))
 
 
 def cmd_widget_create(args):
+    """Add a widget to a dashboard."""
     client = get_client()
-    result = client.create_dashboard_widget(args.dashboard, args.endpoint_id,
-                                             args.key_path, args.widget_type,
-                                             args.label)
+    config = _load_json_argument(args.config) if args.config else None
+    result = client.create_dashboard_widget(
+        args.dashboard,
+        args.app,
+        args.endpoint,
+        args.key_path,
+        args.widget_type,
+        args.label,
+        config=config,
+        sort_order=args.sort_order,
+    )
     _print(result)
 
 
 def cmd_widget_delete(args):
+    """Remove a widget from a dashboard."""
     client = get_client()
     client.delete_dashboard_widget(args.dashboard, args.uuid)
     print(f'Deleted widget: {args.uuid}')
 
 
 def cmd_widget_update(args):
+    """Update a dashboard widget."""
     client = get_client()
     kwargs = {}
     if args.label is not None:
@@ -424,11 +503,23 @@ def cmd_widget_update(args):
 
 
 def cmd_dashboard_data(args):
+    """Get live data for a dashboard."""
     client = get_client()
-    _print(client.dashboard_data(args.dashboard))
+    _print(client.dashboard_state(args.dashboard))
+
+
+def cmd_widget_set(args):
+    """Update a value through its widget binding."""
+    client = get_client()
+    try:
+        value = json.loads(args.value)
+    except (json.JSONDecodeError, ValueError):
+        value = args.value
+    _print(client.set_dashboard_widget_value(args.dashboard, args.uuid, value))
 
 
 def cmd_dashboard_patch(args):
+    """Update a value via a dashboard widget."""
     client = get_client()
     try:
         value = json.loads(args.value)
@@ -440,11 +531,13 @@ def cmd_dashboard_patch(args):
 
 
 def cmd_keys(args):
+    """List app-scoped API keys."""
     client = get_client()
     _print(client.app_keys(args.app))
 
 
 def cmd_key_create(args):
+    """Create an app-scoped API key."""
     client = get_client()
     result = client.create_app_key(args.app)
     _print(result)
@@ -453,12 +546,14 @@ def cmd_key_create(args):
 
 
 def cmd_key_delete(args):
+    """Deactivate an app-scoped API key."""
     client = get_client()
     client.delete_app_key(args.app, args.uuid)
     print(f'Deactivated key: {args.uuid}')
 
 
 def cmd_platform_tokens(args):
+    """List platform tokens."""
     client = get_client()
     result = client.platform_tokens()
     if isinstance(result, list):
@@ -473,6 +568,7 @@ def cmd_platform_tokens(args):
 
 
 def cmd_platform_token_create(args):
+    """Create a platform token."""
     client = get_client()
     result = client.create_platform_token(args.name)
     _print(result)
@@ -482,12 +578,14 @@ def cmd_platform_token_create(args):
 
 
 def cmd_platform_token_revoke(args):
+    """Revoke a platform token."""
     client = get_client()
     client.revoke_platform_token(args.uuid)
     print(f'Revoked platform token: {args.uuid}')
 
 
 def cmd_billing_status(args):
+    """Show billing plan info and usage."""
     client = get_client()
     result = client.billing_status()
     if isinstance(result, dict):
@@ -500,7 +598,13 @@ def cmd_billing_status(args):
         _print(result)
 
 
+def cmd_limits(args):
+    """Show enforced plan limits and remaining capacity."""
+    _print(get_client().limits())
+
+
 def main():
+    """Parse arguments and dispatch to the appropriate command handler."""
     parser = argparse.ArgumentParser(
         prog='meow',
         description='meow meow scratch — send and read API data from your terminal',
@@ -514,6 +618,12 @@ def main():
     p_send.add_argument('data', nargs='+', metavar='key=value',
                         help='Data as key=value pairs (numbers auto-detected)')
     p_send.set_defaults(func=cmd_send)
+
+    p = sub.add_parser('send-batch', help='Atomically send a JSON array of records')
+    p.add_argument('app', help='App slug')
+    p.add_argument('endpoint', help='Endpoint slug')
+    p.add_argument('records', help='JSON array or @path/to/records.json')
+    p.set_defaults(func=cmd_send_batch)
 
     # meow get <app> <endpoint> [filters...]
     p_get = sub.add_parser('get', help='Read data from a public endpoint')
@@ -562,7 +672,9 @@ def main():
     p.add_argument('name', help='Display name')
     p.add_argument('slug', help='URL slug')
     p.add_argument('--description', help='Description')
-    p.add_argument('--private', action='store_true', help='Make private')
+    visibility = p.add_mutually_exclusive_group()
+    visibility.add_argument('--public', action='store_true', help='Make publicly readable')
+    visibility.add_argument('--private', action='store_true', help=argparse.SUPPRESS)
     p.set_defaults(func=cmd_create_app)
 
     # meow update-app <app>
@@ -597,7 +709,7 @@ def main():
     p.add_argument('slug', help='URL slug')
     p.add_argument('type', choices=['collection', 'static', 'proxy'], help='Endpoint type')
     p.add_argument('--description', help='Description')
-    p.add_argument('--private', action='store_true', help='Make private')
+    p.add_argument('--public', action='store_true', help='Make publicly readable')
     p.set_defaults(func=cmd_create_endpoint)
 
     # meow update-endpoint <app> <endpoint>
@@ -677,6 +789,7 @@ def main():
     p = sub.add_parser('payload-get', help='Get static payload')
     p.add_argument('app', help='App slug')
     p.add_argument('endpoint', help='Endpoint slug')
+    p.add_argument('--metadata', action='store_true', help='Include updated_at metadata')
     p.set_defaults(func=cmd_payload_get)
 
     # meow payload-set <app> <endpoint> key=value ...
@@ -802,13 +915,16 @@ def main():
     p.add_argument('dashboard', help='Dashboard slug')
     p.set_defaults(func=cmd_widgets)
 
-    # meow widget-create <dashboard> <endpoint_id> <key_path> <type> <label>
+    # meow widget-create <dashboard> <app> <endpoint> <key_path> <type> <label>
     p = sub.add_parser('widget-create', help='Add a widget to a dashboard')
     p.add_argument('dashboard', help='Dashboard slug')
-    p.add_argument('endpoint_id', help='Endpoint UUID')
+    p.add_argument('app', help='App slug')
+    p.add_argument('endpoint', help='Endpoint slug')
     p.add_argument('key_path', help='Data key path')
     p.add_argument('widget_type', choices=['toggle', 'color', 'slider', 'number', 'text', 'select', 'display'], help='Widget type')
     p.add_argument('label', help='Display label')
+    p.add_argument('--config', help='JSON object or @path/to/config.json')
+    p.add_argument('--sort-order', type=int, default=0)
     p.set_defaults(func=cmd_widget_create)
 
     # meow widget-update <dashboard> <uuid>
@@ -831,6 +947,12 @@ def main():
     p = sub.add_parser('dashboard-data', help='Get live dashboard data')
     p.add_argument('dashboard', help='Dashboard slug')
     p.set_defaults(func=cmd_dashboard_data)
+
+    p = sub.add_parser('widget-set', help='Update a value through a widget')
+    p.add_argument('dashboard', help='Dashboard slug')
+    p.add_argument('uuid', help='Widget UUID')
+    p.add_argument('value', help='New value (JSON auto-detected)')
+    p.set_defaults(func=cmd_widget_set)
 
     # meow dashboard-patch <dashboard> <endpoint_uuid> <key_path> <value>
     p = sub.add_parser('dashboard-patch', help='Update a value via dashboard widget')
@@ -877,6 +999,9 @@ def main():
     # meow billing-status
     p = sub.add_parser('billing-status', help='Show plan info and usage')
     p.set_defaults(func=cmd_billing_status)
+
+    p = sub.add_parser('limits', help='Show enforced plan limits and capacity')
+    p.set_defaults(func=cmd_limits)
 
     args = parser.parse_args()
     if not args.command:

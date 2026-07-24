@@ -12,7 +12,7 @@ from meow_sdk import Meow
 api = Meow(
     base_url="https://meowmeowscratch.com",  # optional
     username="jake",                           # for public reads
-    api_key="mms_your_key_here",              # for writes + management
+    api_key="YOUR_PLATFORM_TOKEN",             # for writes + management
 )
 ```
 
@@ -44,6 +44,21 @@ result = api.send("weather-station", "readings", {
     "humidity": 65,
 })
 print(result["uuid"])
+```
+
+---
+
+### `api.send_many(app, endpoint, records)` { #send-many }
+
+Atomically create one to 100 records. `records` is a list of bare data
+dictionaries. The complete batch is validated before any row is stored.
+
+```python
+result = api.send_many("weather-station", "readings", [
+    {"temperature": 22.5, "humidity": 65},
+    {"temperature": 22.7, "humidity": 64},
+])
+print(result["created"])
 ```
 
 ---
@@ -203,7 +218,7 @@ print(app["endpoint_count"])
 
 ---
 
-### `api.create_app(name, slug, description="", is_public=True)` { #create-app }
+### `api.create_app(name, slug, description="", is_public=False)` { #create-app }
 
 Create a new app.
 
@@ -212,11 +227,11 @@ Create a new app.
 | `name` | `str` | | Display name |
 | `slug` | `str` | | URL slug (letters, numbers, hyphens) |
 | `description` | `str` | `""` | Optional description |
-| `is_public` | `bool` | `True` | Whether endpoints are publicly readable |
+| `is_public` | `bool` | `False` | Whether endpoints are publicly readable |
 
 ```python
 api.create_app("Weather Station", "weather-station")
-api.create_app("Secret Project", "secret", is_public=False)
+api.create_app("Public Demo", "public-demo", is_public=True)
 ```
 
 ---
@@ -269,7 +284,7 @@ print(ep["record_count"])
 
 ---
 
-### `api.create_endpoint(app, name, slug, endpoint_type="collection", description="", is_public=True)` { #create-endpoint }
+### `api.create_endpoint(app, name, slug, endpoint_type="collection", description="", is_public=False)` { #create-endpoint }
 
 Create a new endpoint.
 
@@ -322,7 +337,7 @@ for field in schema:
 
 ---
 
-### `api.create_field(app, endpoint, name, label, field_type, **kwargs)` { #create-field }
+### `api.create_field(app, endpoint, name, label, field_type, required=False, default_value=None, options=None, help_text="", sort_order=0)` { #create-field }
 
 Create a new field.
 
@@ -349,7 +364,11 @@ api.create_field("weather-station", "readings",
 
 api.create_field("weather-station", "readings",
     "mood", "Mood", "select",
-    options={"choices": ["sunny", "cloudy", "rainy"]})
+    options={"choices": [
+        {"value": "sunny", "label": "Sunny"},
+        {"value": "cloudy", "label": "Cloudy"},
+        {"value": "rainy", "label": "Rainy"},
+    ]})
 ```
 
 ---
@@ -357,6 +376,9 @@ api.create_field("weather-station", "readings",
 ### `api.update_field(app, endpoint, field_uuid, **kwargs)` { #update-field }
 
 Update a field.
+
+Once an endpoint contains records, `name` and `field_type` are immutable.
+Labels, required state, defaults, options, help text, and ordering remain editable.
 
 ```python
 api.update_field("weather-station", "readings", "uuid-123", label="Temp (C)")
@@ -396,6 +418,18 @@ Get the current static payload.
 
 ```python
 payload = api.get_payload("weather-station", "status")
+# Returns the bare document. A new endpoint returns {}.
+```
+
+---
+
+### `api.get_payload_state(app, endpoint)` { #get-payload-state }
+
+Get the HTTP envelope when the update timestamp matters.
+
+```python
+state = api.get_payload_state("weather-station", "status")
+print(state["data"], state["updated_at"])
 ```
 
 ---
@@ -596,7 +630,7 @@ See the [Dashboards guide](dashboards.md) for a full walkthrough.
 | Method | Description |
 |--------|-------------|
 | `api.dashboard_widgets(dashboard)` | List widgets |
-| `api.create_dashboard_widget(dashboard, endpoint_id, key_path, widget_type, label, **kwargs)` | Add a widget |
+| `api.create_dashboard_widget(dashboard, app, endpoint, key_path, widget_type, label, config=None, sort_order=0)` | Add a slug-bound widget |
 | `api.update_dashboard_widget(dashboard, widget_uuid, **kwargs)` | Update a widget |
 | `api.delete_dashboard_widget(dashboard, widget_uuid)` | Remove a widget |
 
@@ -604,8 +638,8 @@ See the [Dashboards guide](dashboards.md) for a full walkthrough.
 
 | Method | Description |
 |--------|-------------|
-| `api.dashboard_data(dashboard)` | Read all current values |
-| `api.dashboard_patch(dashboard, endpoint_uuid, key_path, value)` | Write a single value |
+| `api.dashboard_state(dashboard)` | Read configured widget values |
+| `api.set_dashboard_widget_value(dashboard, widget_uuid, value)` | Write through a widget binding |
 | `api.public_dashboard(share_token)` | Read a public dashboard (no API key) |
 
 ---
@@ -624,7 +658,7 @@ keys = api.app_keys("weather-station")
 
 ---
 
-### `api.create_app_key(app)` { #create-app-key }
+### `api.create_app_key(app, name="Device key", scopes=None)` { #create-app-key }
 
 Create a new app-scoped API key.
 
@@ -632,7 +666,9 @@ Create a new app-scoped API key.
     The key is only shown once.
 
 ```python
-result = api.create_app_key("weather-station")
+result = api.create_app_key(
+    "weather-station", name="garden-pi", scopes=["read", "write"]
+)
 print(result["key"])  # save this!
 ```
 
@@ -686,13 +722,22 @@ api.revoke_platform_token("token-uuid-123")
 
 ---
 
-## Billing
+## Limits and authentication context
 
-### `api.billing_status()` { #billing-status }
+### `api.limits()` { #limits }
 
-Get your current plan, usage, and limits. Requires an API key.
+Get the enforced plan limits and remaining global capacity. Use a platform token
+and call this before provisioning a large schema or dashboard.
 
 ```python
-status = api.billing_status()
-print(f"{status['plan']}: {status['apps_used']}/{status['apps_limit']} apps")
+capacity = api.limits()
+print(capacity["plan"], capacity["limits"]["fields_per_endpoint"])
 ```
+
+### `api.auth_context()` { #auth-context }
+
+Inspect the configured credential type, scopes, and app boundary without
+returning the credential itself.
+
+`api.billing_status()` is deprecated because subscription and Stripe data
+require a browser session. Manage billing in the web app.
